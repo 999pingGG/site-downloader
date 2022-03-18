@@ -26,7 +26,8 @@ const argv = yargs(process.argv.slice(2)).options({
   },
   domains: {
     type: "array",
-    describe: "Restrict downloading stuff only from these domains. Defaults to <site>.",
+    describe: "Restrict downloading stuff only from these domains. Not passing this option means no domain restriction.",
+    default: [],
     alias: "d"
   },
   outputDirectory: {
@@ -40,6 +41,16 @@ const argv = yargs(process.argv.slice(2)).options({
     describe: "\"User-Agent\" header to use while crawling websites. Uses an ancient one by default to possibly maximize simplicity of served pages.",
     default: "Mozilla/5.0 (Windows; U; Windows NT 6.1; chrome://navigator/locale/navigator.properties; rv:1.8.0.1) Gecko/20060126",
     alias: "u"
+  },
+  basicAuthUsername: {
+    type: "string",
+    describe: "Username to use for basic authentication, i.e. when the browser prompts for a username and a password when opening the URL.",
+    alias: "user"
+  },
+  basicAuthPassword: {
+    type: "string",
+    describe: "Password to use for basic authentication, i.e. when the browser prompts for a username and a password when opening the URL.",
+    alias: "pass"
   }
 }).argv;
 
@@ -49,30 +60,30 @@ const axiosInstance = axios.create({
   })
 });
 
-const axiosOptions: AxiosRequestConfig = {
+let axiosOptions: AxiosRequestConfig = {
   headers: {
     "User-Agent": argv.userAgent
   }
 };
 
-const { site, outputDirectory } = argv;
-let { domains } = argv;
-if (!domains)
-  domains = [site];
+if (axiosOptions.headers && (argv.basicAuthUsername || argv.basicAuthPassword))
+  axiosOptions.headers["Authorization"] = `Basic ${Buffer.from(`${argv.basicAuthUsername}:${argv.basicAuthPassword}`).toString("base64")}`;
+
+const { site, domains, outputDirectory } = argv;
 
 const writeFile = (directory: string, filename: string, data: string) => {
   try {
     if (!fs.existsSync(directory))
       fs.mkdirSync(directory, { recursive: true });
   } catch (error: any) {
-    console.error(`Couldn't make directory ${directory}: ${error.message}`);
+    console.error(`Couldn't make directory ${directory}: ${error.message}\n${error.stack}`);
     process.exit(1);
   }
 
   try {
     fs.writeFileSync(filename, data);
   } catch (error: any) {
-    console.error(`Couldn't write file ${filename}: ${error.message}`);
+    console.error(`Couldn't write file ${filename}: ${error.message}\n${error.stack}`);
     process.exit(1);
   }
 };
@@ -104,12 +115,11 @@ const download = (url: string) => {
 
         // Process HTML document links.
         parsed.getElementsByTagName("*").forEach((element: any) => {
+          if (element.rawTagName == "base")
+            return;
+
           let href = element.getAttribute("href");
           if (href) {
-            // Make sure a starting slash is always taken as a relative URL.
-            if (href[0] == "/")
-              href = "." + href;
-
             //                                                                                                                   Extract protocol part.
             const isRelativeUrl: boolean = href.startsWith("./") || href.startsWith("../") || !SUPPORTED_PROTOCOLS.includes(href.substring(0, href.indexOf("://")));
 
@@ -120,7 +130,7 @@ const download = (url: string) => {
               // Take out the "//" at the start.
               domain = domain.netLoc.substring(2);
 
-              if (domains.includes(domain))
+              if (domains.length == 0 || domains.includes(domain))
                 download(finalUrl);
             } else
               throw new Error(`Couldn't parse "${finalUrl}". This is a bug, please report it.`);
@@ -140,9 +150,9 @@ const download = (url: string) => {
     })
     .catch((error: any) => {
       if (error.response && error.response.config)
-        console.error(`An error has occurred while trying to download ${error.response.config.url}: ${error.message}`);
+        console.error(`An error has occurred while trying to download ${error.response.config.url}: ${error.message}\n${error.stack}`);
       else
-        console.error(`An error has occurred while trying to download ${url}: ${error.message}`);
+        console.error(`An error has occurred while trying to download ${url}: ${error.message}\n${error.stack}`);
     });
 };
 
