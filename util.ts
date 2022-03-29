@@ -1,4 +1,4 @@
-import mime from "mime-types";
+import * as mime from "mime-types";
 
 export const windowsOs = process.platform == "win32";
 
@@ -15,8 +15,9 @@ export const getPaths = (absoluteUrl: string, mimeTypeHeader: string): Processed
     filename: ""
   };
 
-  // Take out protocol part.
-  let url: string = absoluteUrl.substring(absoluteUrl.indexOf("://") + 3);
+  // Take out protocol and fragment parts.
+  const hashIndex = absoluteUrl.indexOf("#");
+  let url: string = absoluteUrl.substring(absoluteUrl.indexOf("://") + 3, hashIndex > -1 ? hashIndex : absoluteUrl.length);
 
   let extensionsByMimeType: string[] = [];
   mimeTypeHeader.split(";").some(part => extensionsByMimeType = mime.extensions[part.trim()]);
@@ -28,9 +29,11 @@ export const getPaths = (absoluteUrl: string, mimeTypeHeader: string): Processed
     absoluteUrl.endsWith(".htm") ||
     absoluteUrl.endsWith(".xhtml");
 
-  const paramsStartIndex: number = Math.min(url.indexOf("?"), url.indexOf("#"));
+  const paramsStartIndex: number = getParamsStartIndex(url);
+  const hasParams: boolean = paramsStartIndex > -1;
+
   let params: string = "";
-  if (paramsStartIndex > -1) {
+  if (hasParams) {
     params = url.substring(paramsStartIndex + 1);
     url = url.substring(0, paramsStartIndex);
   }
@@ -49,7 +52,7 @@ export const getPaths = (absoluteUrl: string, mimeTypeHeader: string): Processed
         result.filename = "index";
 
       // If the URL ends with an extension, and it is included in the possible extensions by mime type, then we don't need to add one.
-      const extensionIndex = extensionsByMimeType.findIndex(extension => result.filename.endsWith(extension));
+      const extensionIndex = extensionsByMimeType.findIndex(extension => result.filename.endsWith("." + extension));
       const needToAppendExtension: boolean = extensionsByMimeType.length > 0 && extensionIndex < 0;
       if (needToAppendExtension)
         result.filename += "." + extensionsByMimeType[0];
@@ -73,13 +76,35 @@ export const getPaths = (absoluteUrl: string, mimeTypeHeader: string): Processed
   return result;
 };
 
+// This function is useful in the weird case where an URL contains a group of slashes (they all should be treated as one).
 export const collapseSlashGroupsInUrl = (url: string): string => {
   let asArray = Array.from(url);
-  const paramsStartIndex: number = Math.max(asArray.findIndex(char => char == "?"), asArray.findIndex(char => char == "#"));
 
-  for (let i = (paramsStartIndex > -1 ? paramsStartIndex - 1 : asArray.length - 1); i > url.indexOf("://") + 5; i--)
+  const paramsStartIndex: number = getParamsStartIndex(url);
+  const hasParams: boolean = paramsStartIndex > -1;
+
+  for (let i = (hasParams ? paramsStartIndex - 1 : asArray.length - 1); i > url.indexOf("://") + 5; i--)
     if (asArray[i] == "/" && asArray[i - 1] == "/")
       asArray.splice(i, 1);
 
   return asArray.join("");
 };
+
+const getParamsStartIndex = (url: string): number => {
+  const questionMarkIndex: number = url.indexOf("?");
+  const hashIndex: number = url.indexOf("#");
+
+  const hasQuestionMark: boolean = questionMarkIndex > -1;
+  const hasHash: boolean = hashIndex > -1;
+
+  if (!hasQuestionMark && !hasHash)
+    return -1;
+  else if (hasQuestionMark && !hasHash)
+    return questionMarkIndex;
+  else if (hasHash && !hasQuestionMark)
+    return hashIndex;
+  else
+    return Math.min(questionMarkIndex, hashIndex);
+};
+
+export const domainListContains = (domain: string, domainList: string[]): boolean => domainList.some(element => domain.endsWith(element));

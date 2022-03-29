@@ -1,12 +1,13 @@
 import axios, { AxiosRequestConfig } from "axios";
-import https from "https";
-import fs from "fs";
-import path from "path";
-import URLToolkit, { URLParts } from "url-toolkit";
+import * as https from "https";
+import * as fs from "fs";
+import * as path from "path";
+import * as URLToolkit from "url-toolkit";
+import { URLParts } from "url-toolkit";
 const HTMLParser = require("node-html-parser");
 const yargs = require("yargs/yargs");
 
-import { getPaths, collapseSlashGroupsInUrl } from "./util";
+import { getPaths, collapseSlashGroupsInUrl, domainListContains } from "./util";
 
 // Does Axios even support ftp?
 const SUPPORTED_PROTOCOLS = ["http", "https", "ftp"];
@@ -88,9 +89,14 @@ const writeFile = (directory: string, filename: string, data: string) => {
   }
 };
 
-const download = (url: string) => {
+const downloadRecursive = (url: string, onResponseUrlReceived?: (url: string) => void) => {
   axiosInstance.get(url, axiosOptions)
-    .then((response: any) => {
+    .then(async (response: any) => {
+      const responseUrl: string = response.request.res.responseUrl;
+
+      if (onResponseUrlReceived)
+        onResponseUrlReceived(responseUrl);
+
       // No content and reset content, nothing to download.
       if (response.status == 204 || response.status == 205)
         return;
@@ -99,61 +105,91 @@ const download = (url: string) => {
       // TODO: Log this with the future logging system. Something like "missing content-type, assuming binary file."
       if (!contentType)
         contentType = "application/octet-stream";
-      const responseUrl: string = response.request.res.responseUrl;
 
       console.log(`Downloading ${responseUrl}`);
 
-      let htmlToWrite: string | false = false;
-      if (contentType.includes("html")) {
-        const parsed = HTMLParser.parse(response.data);
-        let baseHref: string;
-        {
-          const baseElement = parsed.getElementsByTagName("base")[0];
-          if (baseElement && baseElement.href)
-            baseHref = baseElement.href;
-        }
-
-        // Process HTML document links.
-        parsed.getElementsByTagName("*").forEach((element: any) => {
-          if (element.rawTagName == "base")
-            return;
-
-          let href = element.getAttribute("href");
-          if (href) {
-            //                                                                                                                   Extract protocol part.
-            const isRelativeUrl: boolean = href.startsWith("./") || href.startsWith("../") || !SUPPORTED_PROTOCOLS.includes(href.substring(0, href.indexOf("://")));
-
-            const finalUrl: string = collapseSlashGroupsInUrl(isRelativeUrl ? URLToolkit.buildAbsoluteURL(baseHref ? baseHref : responseUrl, href, { alwaysNormalize: true }) : href);
-
-            let domain: URLParts | string | null = URLToolkit.parseURL(finalUrl);
-            if (domain) {
-              // Take out the "//" at the start.
-              domain = domain.netLoc.substring(2);
-
-              if (domains.length == 0 || domains.includes(domain))
-                download(finalUrl);
-            } else
-              throw new Error(`Couldn't parse "${finalUrl}". This is a bug, please report it.`);
+      let dataToWrite: string = response.data;
+      if (contentType.includes("html"))
+        dataToWrite = await new Promise((resolve, reject) => {
+          const parsed = HTMLParser.parse(response.data, { comment: true });
+          let baseHref: string;
+          {
+            const baseElement = parsed.getElementsByTagName("base")[0];
+            if (baseElement && baseElement.href)
+              baseHref = baseElement.href;
+            else
+              baseHref = responseUrl;
           }
+
+          // *** Process HTML document links. ***
+
+          const elements = parsed.getElementsByTagName("*");
+
+          // Can I have a number variable and pass it by reference?
+          let elementsLeftToProcess = { value: elements.length };
+
+          const elementProcessed = () => {
+            elementsLeftToProcess.value--;
+
+            if (elementsLeftToProcess.value == 0)
+              resolve(parsed.toString());
+            else if (elementsLeftToProcess.value < 0)
+              console.error(`elementsLeftToProcess.value < 0 (${elementsLeftToProcess.value}), this is a bug, please report it.`);
+          };
+
+          elements.forEach((element: any) => {
+            // Ignore the <base> element.
+            if (element.rawTagName == "base") {
+              elementProcessed();
+              return;
+            }
+
+            let href = element.getAttribute("href");
+            if (href) {
+              //                                                                                                                   Extract protocol part.
+              const isRelativeUrl: boolean = href.startsWith("./") || href.startsWith("../") || !SUPPORTED_PROTOCOLS.includes(href.substring(0, href.indexOf("://")));
+
+              const absoluteUrl: string = collapseSlashGroupsInUrl(isRelativeUrl ? URLToolkit.buildAbsoluteURL(baseHref, href, { alwaysNormalize: true }) : href);
+
+              let domain: URLParts | string | null = URLToolkit.parseURL(absoluteUrl);
+              if (domain) {
+                // Take out the "//" at the start.
+                domain = domain.netLoc.substring(2);
+
+                if (domains.length == 0 || domainListContains(domain, domains))
+                  downloadRecursive(absoluteUrl, (receivedUrl: string) => {
+                    // TODO: Replace absolute URL here with a local one.
+                    element.setAttribute("href", receivedUrl);
+                    elementProcessed();
+                  });
+                else
+                  elementProcessed();
+              } else {
+                console.error(`Couldn't parse "${absoluteUrl}". This is a bug, please report it.`);
+                elementProcessed();
+              }
+            } else
+              elementProcessed();
+          });
         });
 
-        htmlToWrite = parsed.toString();
-      }
-
-      // Actually download file.
+      // Actually write downloaded data to file.
       const paths = getPaths(responseUrl, response.headers["content-type"]);
 
       const outputDirectoryReal = outputDirectory + path.sep + paths.directory;
       const outputFilenameReal = outputDirectoryReal + path.sep + paths.filename;
 
-      writeFile(outputDirectoryReal, outputFilenameReal, htmlToWrite || response.data);
+      writeFile(outputDirectoryReal, outputFilenameReal, dataToWrite);
     })
     .catch((error: any) => {
       if (error.response && error.response.config)
         console.error(`An error has occurred while trying to download ${error.response.config.url}: ${error.message}\n${error.stack}`);
       else
         console.error(`An error has occurred while trying to download ${url}: ${error.message}\n${error.stack}`);
+
+      if (onResponseUrlReceived)
+        onResponseUrlReceived(url);
     });
 };
 
-download(`http://${site}/`);
+downloadRecursive(`http://${site}/`);
