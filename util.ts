@@ -15,19 +15,33 @@ export const getPaths = (absoluteUrl: string, mimeTypeHeader: string): Processed
     filename: ""
   };
 
-  // Take out protocol and fragment parts.
-  const hashIndex = absoluteUrl.indexOf("#");
-  let url: string = absoluteUrl.substring(absoluteUrl.indexOf("://") + 3, hashIndex > -1 ? hashIndex : absoluteUrl.length);
-
   let extensionsByMimeType: string[] = [];
   mimeTypeHeader.split(";").some(part => extensionsByMimeType = mime.extensions[part.trim()]);
 
+  // Empty URL passed.
+  if (!absoluteUrl) {
+    result.directory = ".";
+    result.filename = "index";
+
+    if (extensionsByMimeType && extensionsByMimeType.length > 0)
+      result.filename += "." + extensionsByMimeType[0];
+
+    return result;
+  }
+
+  // Take out protocol and fragment parts.
+  const hashIndex = absoluteUrl.indexOf("#");
+  const indexOf = absoluteUrl.indexOf("://");
+  let url: string = absoluteUrl.substring(indexOf > -1 ? indexOf + 3 : 0, hashIndex > -1 ? hashIndex : absoluteUrl.length);
+
   const endsWithSlash: boolean = url.endsWith("/");
   const isHtml: boolean =
-    (extensionsByMimeType.findIndex(extension => extension.includes("htm")) > -1) ||
-    absoluteUrl.endsWith(".html") ||
-    absoluteUrl.endsWith(".htm") ||
-    absoluteUrl.endsWith(".xhtml");
+    extensionsByMimeType && (
+      (extensionsByMimeType.findIndex(extension => extension.includes("htm")) > -1) ||
+      absoluteUrl.endsWith(".html") ||
+      absoluteUrl.endsWith(".htm") ||
+      absoluteUrl.endsWith(".xhtml")
+    );
 
   const paramsStartIndex: number = getParamsStartIndex(url);
   const hasParams: boolean = paramsStartIndex > -1;
@@ -52,14 +66,14 @@ export const getPaths = (absoluteUrl: string, mimeTypeHeader: string): Processed
         result.filename = "index";
 
       // If the URL ends with an extension, and it is included in the possible extensions by mime type, then we don't need to add one.
-      const extensionIndex = extensionsByMimeType.findIndex(extension => result.filename.endsWith("." + extension));
-      const needToAppendExtension: boolean = extensionsByMimeType.length > 0 && extensionIndex < 0;
+      const extensionIndex = extensionsByMimeType ? extensionsByMimeType.findIndex(extension => result.filename.endsWith("." + extension)) : 0;
+      const needToAppendExtension: boolean = !!extensionIndex && extensionsByMimeType.length > 0 && extensionIndex < 0;
       if (needToAppendExtension)
         result.filename += "." + extensionsByMimeType[0];
     } else {
       // URL doesn't contain slash.
       result.directory = url;
-      if (extensionsByMimeType.length > 0)
+      if (extensionsByMimeType && extensionsByMimeType.length > 0)
         result.filename = "index." + extensionsByMimeType[0];
       else
         result.filename = "index";
@@ -83,7 +97,10 @@ export const collapseSlashGroupsInUrl = (url: string): string => {
   const paramsStartIndex: number = getParamsStartIndex(url);
   const hasParams: boolean = paramsStartIndex > -1;
 
-  for (let i = (hasParams ? paramsStartIndex - 1 : asArray.length - 1); i > url.indexOf("://") + 5; i--)
+  let startingIndex = url.indexOf("://");
+  startingIndex = startingIndex < 0 ? 1 : startingIndex + 4;
+
+  for (let i = (hasParams ? paramsStartIndex - 1 : asArray.length - 1); i > startingIndex; i--)
     if (asArray[i] == "/" && asArray[i - 1] == "/")
       asArray.splice(i, 1);
 
