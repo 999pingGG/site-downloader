@@ -1,4 +1,8 @@
 import * as mime from "mime-types";
+import * as URLToolkit from "url-toolkit";
+
+// Does Axios even support ftp?
+const SUPPORTED_PROTOCOLS = ["http", "https", "ftp"];
 
 export const windowsOs = process.platform == "win32";
 
@@ -62,14 +66,16 @@ export const getPaths = (absoluteUrl: string, mimeTypeHeader: string): Processed
       result.directory = url.substring(0, lastSlashIndex);
       result.filename = url.substring(lastSlashIndex + 1);
 
-      if (result.filename.length == 0)
-        result.filename = "index";
-
       // If the URL ends with an extension, and it is included in the possible extensions by mime type, then we don't need to add one.
       const extensionIndex = extensionsByMimeType ? extensionsByMimeType.findIndex(extension => result.filename.endsWith("." + extension)) : 0;
       const needToAppendExtension: boolean = !!extensionIndex && extensionsByMimeType.length > 0 && extensionIndex < 0;
-      if (needToAppendExtension)
+
+      if (needToAppendExtension) {
+        if (endsWithSlash)
+          result.filename = "index";
+
         result.filename += "." + extensionsByMimeType[0];
+      }
     } else {
       // URL doesn't contain slash.
       result.directory = url;
@@ -125,3 +131,31 @@ const getParamsStartIndex = (url: string): number => {
 };
 
 export const domainListContains = (domain: string, domainList: string[]): boolean => domainList.some(element => domain.endsWith(element));
+
+export const getLocalRelativeHyperlink = (htmlDocumentUrl: string, link: string): string => {
+  const htmlDocumentPaths = getPaths(htmlDocumentUrl, "");
+  const linkPaths = getPaths(link, "");
+
+  if (htmlDocumentPaths.directory == linkPaths.directory && htmlDocumentPaths.filename == linkPaths.filename)
+    return ".";
+
+  let htmlDocumentUrlParts = htmlDocumentPaths.directory.split("/");
+
+  let linkParts = [
+    ...linkPaths.directory.split("/"),
+    linkPaths.filename
+  ];
+
+  for (let i = 0; htmlDocumentUrlParts.length && linkParts.length && htmlDocumentUrlParts[0] == linkParts[0]; i++) {
+    htmlDocumentUrlParts.splice(0, 1);
+    linkParts.splice(0, 1);
+  }
+
+  return "../".repeat(htmlDocumentUrlParts.length) + linkParts.join("/");
+};
+
+export const getAbsoluteUrl = (url: string, baseHref: string): string => {
+  //                                                                                                                   Extract protocol part.
+  const isRelativeUrl: boolean = url.startsWith("./") || url.startsWith("../") || !SUPPORTED_PROTOCOLS.includes(url.substring(0, url.indexOf("://")));
+  return collapseSlashGroupsInUrl(isRelativeUrl ? URLToolkit.buildAbsoluteURL(baseHref, url, { alwaysNormalize: true }) : url);
+};

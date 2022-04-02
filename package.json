@@ -1,6 +1,6 @@
 {
   "name": "site-downloader",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "An utility to download entire websites for archiving and offline browsing purposes.",
   "main": "index.ts",
   "bin": "index.ts",
